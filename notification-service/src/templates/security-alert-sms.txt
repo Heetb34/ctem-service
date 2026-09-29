@@ -1,0 +1,5 @@
+SECURITY ALERT - {{severity}}
+{{vulnerability}} detected on {{asset}}.
+Status: {{status}}
+{{description}}
+- Security Notification Framework

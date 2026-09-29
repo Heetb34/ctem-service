@@ -5,6 +5,9 @@ from src.utils.http_client import async_http_call
 from src.services.approval_service import ApprovalService
 from src.utils.safe_eval import evaluate_condition, UnsafeExpressionError
 
+NOTIFICATION_SERVICE_URL = "http://localhost:3000/notifications"
+
+
 class StepExecutor:
     def __init__(self, db, redis, kafka_producer):
         self.db = db
@@ -34,7 +37,7 @@ class StepExecutor:
     async def _execute_action(self, step: Dict, context: Dict) -> Dict:
         action_type = step.get("action")
         if action_type == "send_notification":
-            return {"status": "success", "notification_id": "notif_123"}
+            return await self._send_notification(step, context)
         elif action_type == "http":
             url = step.get("url")
             method = step.get("method", "POST")
@@ -46,6 +49,52 @@ class StepExecutor:
             return {"status": "success", "record_id": "rec_123"}
         else:
             return {"status": "success", "message": f"Action {action_type} executed"}
+
+    async def _send_notification(self, step: Dict, context: Dict) -> Dict:
+        """
+        Calls the Notification Framework's REST API to actually deliver
+        a security alert. The step definition specifies which channel to
+        use; the recipient and alert content come from the workflow's
+        running context (populated by whatever triggered this workflow,
+        e.g. an ExposureDetected event from the CTEM Service).
+        """
+        step_input = step.get("input", {})
+        channel = step_input.get("channel", "email")
+        user_id = step_input.get("recipient") or context.get("user_id")
+        template_id = step_input.get("template") or context.get("template_id", "security-alert")
+        notification_data = context.get("notification_data", {})
+
+        if not user_id:
+            return {
+                "status": "failed",
+                "error": "No recipient user_id available in step input or context",
+            }
+
+        payload = {
+            "userId": user_id,
+            "channel": channel,
+            "templateId": template_id,
+            "data": notification_data,
+        }
+
+        try:
+            result = await async_http_call(
+                "POST",
+                NOTIFICATION_SERVICE_URL,
+                headers={"Content-Type": "application/json"},
+                json=payload,
+            )
+            return {
+                "status": "success",
+                "notification_id": result.get("notification_id"),
+            }
+        except httpx.HTTPStatusError as e:
+            return {
+                "status": "failed",
+                "error": f"Notification service returned {e.response.status_code}: {e.response.text}",
+            }
+        except Exception as e:
+            return {"status": "failed", "error": str(e)}
 
     async def _evaluate_condition(self, step: Dict, context: Dict) -> Dict:
         expr = step.get("condition")
