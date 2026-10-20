@@ -56,7 +56,7 @@ class WorkflowEngine:
             status="pending",
             initiated_by=initiated_by,
             dedup_key=dedup_key,
-            context={"step_results": {}},
+            context={**trigger_data, "step_results": {}},
         )
         self.db.add(execution)
         await self.db.commit()
