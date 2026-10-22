@@ -1,0 +1,25 @@
+Metadata-Version: 2.4
+Name: evidence-repo
+Version: 0.1.0
+Requires-Python: >=3.12
+Requires-Dist: fastapi==0.115.0
+Requires-Dist: uvicorn[standard]==0.30.6
+Requires-Dist: pydantic==2.9.2
+Requires-Dist: pydantic-settings==2.5.2
+Requires-Dist: sqlalchemy[asyncio]==2.0.35
+Requires-Dist: asyncpg==0.29.0
+Requires-Dist: alembic==1.13.3
+Requires-Dist: boto3==1.35.24
+Requires-Dist: aiokafka==0.11.0
+Requires-Dist: python-jose[cryptography]==3.3.0
+Requires-Dist: python-multipart==0.0.9
+Requires-Dist: structlog==24.4.0
+Requires-Dist: httpx==0.27.2
+Requires-Dist: tenacity==9.0.0
+Provides-Extra: dev
+Requires-Dist: pytest==8.3.3; extra == "dev"
+Requires-Dist: pytest-asyncio==0.24.0; extra == "dev"
+Requires-Dist: pytest-cov==5.0.0; extra == "dev"
+Requires-Dist: ruff==0.6.9; extra == "dev"
+Requires-Dist: mypy==1.11.2; extra == "dev"
+Requires-Dist: types-boto3==1.35.71; extra == "dev"
