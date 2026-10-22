@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 from app.routers import prioritization
 from app.routers import exposure
 from app.database import Base, engine

@@ -42,9 +42,13 @@ class ReportScheduleResponse(BaseModel):
     created_by: str
     last_run_at: datetime | None = None
     next_run_at: datetime | None = None
+    attempts: int = 0
+    last_error: str | None = None
+    last_report_id: int | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
-    
+
+
 class ReportScheduleUpdate(BaseModel):
     frequency: Literal[
         "once",
