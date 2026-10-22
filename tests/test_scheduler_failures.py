@@ -110,9 +110,10 @@ def test_gives_up_after_max_attempts(env):
     state["fail"] = True
     sid = make_schedule(engine, frequency="once")
 
-    for _ in range(runner.MAX_ATTEMPTS):
+    for attempt in range(runner.MAX_ATTEMPTS):
         runner.run_due_report_schedules()
-        make_due(engine, sid)
+        if attempt < runner.MAX_ATTEMPTS - 1:
+            make_due(engine, sid)
 
     with Session(engine) as db:
         item = db.get(ReportSchedule, sid)
