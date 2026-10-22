@@ -1,0 +1,55 @@
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: evidence
+      POSTGRES_PASSWORD: evidence
+      POSTGRES_DB: evidence
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evidence"]
+      interval: 2s
+      retries: 30
+
+  localstack:
+    image: localstack/localstack:3.7
+    environment:
+      SERVICES: s3
+      DEBUG: "0"
+      DATA_DIR: /tmp/localstack/data
+    ports: ["4566:4566"]
+    volumes:
+      - ./docker/localstack-init:/etc/localstack/init/ready.d
+    healthcheck:
+      test: ["CMD", "bash", "-c", "curl -sf http://localhost:4566/_localstack/health | grep -q s3"]
+      interval: 3s
+      retries: 30
+
+  redpanda:
+    image: redpandadata/redpanda:v24.2.7
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --overprovisioned
+      - --node-id=0
+      - --kafka-addr
+      - internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr
+      - internal://redpanda:9092,external://localhost:19092
+    ports:
+      - "9092:9092"
+      - "19092:19092"
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    env_file: .env
+    depends_on:
+      postgres: { condition: service_healthy }
+      localstack: { condition: service_healthy }
+      redpanda: { condition: service_started }
+    ports: ["8000:8000"]
+    command: ["uvicorn", "evidence_repo.main:app", "--host", "0.0.0.0", "--port", "8000"]
