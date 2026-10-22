@@ -1,0 +1,29 @@
+
+{
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/*.pyc": true,
+    "**/node_modules": true,
+    "**/.venv": true,
+    "**/.venv-win": true,
+    "**/logs": true,
+    "**/.pytest_cache": true,
+    "**/.mypy_cache": true,
+    "**/notifications.db": true,
+    "**/notifications.db-wal": true,
+    "**/notifications.db-shm": true
+  },
+  "search.exclude": {
+    "**/__pycache__": true,
+    "**/*.pyc": true,
+    "**/node_modules": true,
+    "**/.venv": true,
+    "**/.venv-win": true,
+    "**/logs/**": true,
+    "**/generated_reports/**": true,
+    "**/notifications.db": true,
+    "**/notifications.db-wal": true,
+    "**/notifications.db-shm": true
+  }
+}
+

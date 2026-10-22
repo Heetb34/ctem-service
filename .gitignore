@@ -1,6 +1,28 @@
+
+# Node.js dependencies
 node_modules/
+
+# Environment and secrets
 .env
+.venv/
+.venv-win/
+workflow-service-fixed/.venv/
+workflow-service-fixed/.venv-win/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Local databases
 notifications.db
 notifications.db-wal
 notifications.db-shm
+
+# Runtime logs and generated reports
 logs/
+generated_reports/
+
+# Temporary report exports in the project root
+/report-1.csv
+/report-1.pdf
+/report-1.xlsx
