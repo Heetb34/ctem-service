@@ -26,6 +26,8 @@ class ReportSchedule(Base):
     start_at = Column(DateTime, nullable=False)
 
     recipients = Column(JSON, nullable=True)
+    # Addresses already accepted by SMTP for the current scheduled run.
+    delivered_recipients = Column(JSON, nullable=True)
     report_format = Column(String(10), nullable=False, default="pdf")
     enabled = Column(Boolean, nullable=False, default=True)
     created_by = Column(String(100), nullable=False)

@@ -12,6 +12,7 @@ workflow-service-fixed/.venv-win/
 # Python cache
 __pycache__/
 *.py[cod]
+.pytest-work/
 
 # Local databases
 notifications.db

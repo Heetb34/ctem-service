@@ -9,6 +9,17 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+class PartialEmailDeliveryError(RuntimeError):
+    """SMTP accepted some recipients and explicitly refused the rest."""
+
+    def __init__(self, accepted_recipients: list[str], refused_recipients: list[str]):
+        self.accepted_recipients = accepted_recipients
+        self.refused_recipients = refused_recipients
+        super().__init__(
+            "SMTP refused recipient(s): " + ", ".join(refused_recipients)
+        )
+
+
 def send_report_email(
     recipients: list[str],
     report_name: str,
@@ -76,7 +87,18 @@ def send_report_email(
         if smtp_username and smtp_password:
             server.login(smtp_username, smtp_password)
 
-        server.send_message(message)
+        refused = server.send_message(message)
+
+    if refused:
+        refused_recipients = list(refused)
+        accepted_recipients = [
+            recipient for recipient in recipients
+            if recipient not in refused
+        ]
+        raise PartialEmailDeliveryError(
+            accepted_recipients=accepted_recipients,
+            refused_recipients=refused_recipients,
+        )
 
     logger.info(
         "Report email sent to %s for %s",

@@ -20,6 +20,7 @@ def create_report_schedule(db: Session, schedule):
         frequency=schedule.frequency,
         start_at=start_at,
         recipients=schedule.recipients,
+        delivered_recipients=[],
         report_format=schedule.report_format,
         enabled=schedule.enabled,
         created_by=schedule.created_by,
