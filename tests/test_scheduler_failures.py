@@ -14,6 +14,7 @@ from app.models import (  # noqa: F401  (imported so create_all builds every tab
 from app.models.report import Report
 from app.models.report_schedule import ReportSchedule
 import app.services.report_scheduler_runner as runner
+from app.services.report_email_service import PartialEmailDeliveryError
 
 
 @pytest.fixture()
@@ -105,6 +106,40 @@ def test_email_failure_retries_without_duplicate_report(env):
         assert db.query(Report).count() == 1  # reused, not regenerated
 
 
+def test_partial_email_delivery_retries_only_refused_recipients(env, monkeypatch):
+    engine, sent, state = env
+    recipients = ["a@example.com", "b@example.com"]
+    sid = make_schedule(engine, recipients=recipients)
+    calls = []
+
+    def send_with_partial_refusal(recipients, report_name, file_path):
+        calls.append(list(recipients))
+        if len(calls) == 1:
+            raise PartialEmailDeliveryError(
+                accepted_recipients=["a@example.com"],
+                refused_recipients=["b@example.com"],
+            )
+        sent.append(recipients)
+
+    monkeypatch.setattr(runner, "send_report_email", send_with_partial_refusal)
+
+    runner.run_due_report_schedules()
+    with Session(engine) as db:
+        item = db.get(ReportSchedule, sid)
+        assert item.delivered_recipients == ["a@example.com"]
+        assert item.attempts == 1
+
+    make_due(engine, sid)
+    runner.run_due_report_schedules()
+
+    assert calls == [recipients, ["b@example.com"]]
+    assert sent == [["b@example.com"]]
+    with Session(engine) as db:
+        item = db.get(ReportSchedule, sid)
+        assert item.delivered_recipients == []
+        assert item.attempts == 0
+
+
 def test_gives_up_after_max_attempts(env):
     engine, sent, state = env
     state["fail"] = True
@@ -120,7 +155,32 @@ def test_gives_up_after_max_attempts(env):
         assert item.enabled is False
         assert item.next_run_at is None
         assert "SMTP down" in item.last_error
-        assert item.attempts == 0
+        assert item.attempts == runner.MAX_ATTEMPTS
+
+
+def test_recurring_schedule_starts_fresh_retry_count_after_giving_up(env):
+    engine, sent, state = env
+    state["fail"] = True
+    sid = make_schedule(engine, frequency="daily")
+
+    for attempt in range(runner.MAX_ATTEMPTS):
+        runner.run_due_report_schedules()
+        if attempt < runner.MAX_ATTEMPTS - 1:
+            make_due(engine, sid)
+
+    with Session(engine) as db:
+        item = db.get(ReportSchedule, sid)
+        assert item.attempts == runner.MAX_ATTEMPTS
+        assert item.last_error
+
+    make_due(engine, sid)
+    runner.run_due_report_schedules()
+
+    with Session(engine) as db:
+        item = db.get(ReportSchedule, sid)
+        assert item.attempts == 1
+        assert "SMTP down" in item.last_error
+        assert db.query(Report).count() == 2
 
 
 def test_empty_dataset_still_generates_report(env):
@@ -147,3 +207,23 @@ def test_disabled_schedule_is_not_run(env):
     assert sent == []
     with Session(engine) as db:
         assert db.query(Report).count() == 0
+
+
+def test_claim_lease_prevents_duplicate_and_recovers_after_restart(env):
+    engine, sent, state = env
+    sid = make_schedule(engine)
+    claimed_at = runner._utcnow()
+
+    with Session(engine) as db:
+        claimed = runner._claim_next_due(db, claimed_at)
+        assert claimed.id == sid
+
+    # A second API worker cannot claim while the persisted lease is active.
+    with Session(engine) as db:
+        assert runner._claim_next_due(db, runner._utcnow()) is None
+
+    # Simulate a process restart after its lease expires; the due row is claimable again.
+    make_due(engine, sid)
+    with Session(engine) as db:
+        reclaimed = runner._claim_next_due(db, runner._utcnow())
+        assert reclaimed.id == sid

@@ -8,7 +8,10 @@ from sqlalchemy.orm import Session
 from app.database import engine
 from app.models.report import Report
 from app.models.report_schedule import ReportSchedule
-from app.services.report_email_service import send_report_email
+from app.services.report_email_service import (
+    PartialEmailDeliveryError,
+    send_report_email,
+)
 from app.services.report_export_service import (
     build_csv_report,
     build_excel_report,
@@ -121,18 +124,35 @@ def _claim_next_due(db: Session, now: datetime):
     if schedule is None:
         return None
 
+    # A prior run exhausted its retries and was advanced. Keep its final
+    # attempt count visible until the next run becomes due.
+    if schedule.last_report_id is None and schedule.attempts >= MAX_ATTEMPTS:
+        schedule.attempts = 0
+        schedule.last_error = None
+        schedule.delivered_recipients = []
+
     schedule.next_run_at = now + LEASE
     db.commit()
     return schedule
 
 
-def _record_failure(db: Session, schedule_id: int, exc: Exception, now: datetime):
+def _record_failure(
+    db: Session,
+    schedule_id: int,
+    exc: Exception,
+    now: datetime,
+    accepted_recipients: list[str] | None = None,
+):
     schedule = db.get(ReportSchedule, schedule_id)
     if schedule is None:
         return
 
     schedule.attempts = (schedule.attempts or 0) + 1
     schedule.last_error = f"{type(exc).__name__}: {exc}"[:1000]
+    if accepted_recipients:
+        delivered = set(schedule.delivered_recipients or [])
+        delivered.update(accepted_recipients)
+        schedule.delivered_recipients = sorted(delivered)
 
     if schedule.attempts < MAX_ATTEMPTS:
         delay = RETRY_BASE_SECONDS * 2 ** (schedule.attempts - 1)
@@ -146,8 +166,8 @@ def _record_failure(db: Session, schedule_id: int, exc: Exception, now: datetime
             "Schedule %s gave up after %s attempts: %s",
             schedule_id, schedule.attempts, exc,
         )
-        schedule.attempts = 0
         schedule.last_report_id = None
+        schedule.delivered_recipients = []
         _advance(schedule, now)
 
     db.commit()
@@ -162,6 +182,7 @@ def _record_success(db: Session, schedule_id: int, now: datetime):
     schedule.attempts = 0
     schedule.last_error = None
     schedule.last_report_id = None
+    schedule.delivered_recipients = []
     _advance(schedule, now)
     db.commit()
 
@@ -190,17 +211,33 @@ def _process_schedule(db: Session, schedule: ReportSchedule, now: datetime):
         file_path = _write_report_file(report, schedule.report_format)
 
         recipients = schedule.recipients or []
-        if recipients:
+        delivered = set(schedule.delivered_recipients or [])
+        pending_recipients = [
+            recipient for recipient in recipients
+            if recipient not in delivered
+        ]
+        if pending_recipients:
             send_report_email(
-                recipients=recipients,
+                recipients=pending_recipients,
                 report_name=schedule.report_name,
                 file_path=file_path,
             )
             logger.info("Report %s emailed to %s", report.id, recipients)
 
     except Exception as exc:
+        accepted_recipients = (
+            exc.accepted_recipients
+            if isinstance(exc, PartialEmailDeliveryError)
+            else None
+        )
         db.rollback()
-        _record_failure(db, schedule_id, exc, now)
+        _record_failure(
+            db,
+            schedule_id,
+            exc,
+            now,
+            accepted_recipients=accepted_recipients,
+        )
         return
 
     _record_success(db, schedule_id, now)
