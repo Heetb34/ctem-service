@@ -1,0 +1,6 @@
+node_modules/
+.env
+notifications.db
+notifications.db-wal
+notifications.db-shm
+logs/

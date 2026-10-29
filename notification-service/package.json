@@ -1,0 +1,31 @@
+{
+  "name": "notification-system-2",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "email": "node src/workers/Email.js",
+    "sms": "node src/workers/SMS.js",
+    "push": "node src/workers/Push.js",
+    "retry": "node src/workers/Retry.js",
+    "dlq": "node src/workers/DLQ.js",
+    "workers": "concurrently \"npm run email\" \"npm run sms\" \"npm run push\" \"npm run retry\" \"npm run dlq\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@sendgrid/mail": "^8.1.6",
+    "axios": "^1.20.0",
+    "better-sqlite3": "^13.0.3",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "firebase-admin": "^14.2.0",
+    "kafkajs": "^2.2.4",
+    "uuid": "^14.0.1"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5"
+  }
+}

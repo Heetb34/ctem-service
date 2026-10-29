@@ -1,0 +1,5 @@
+🚨 Security Alert - {{severity}}
+Vulnerability: {{vulnerability}}
+Asset: {{asset}}
+Status: {{status}}
+{{description}}
