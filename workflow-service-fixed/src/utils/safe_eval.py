@@ -34,7 +34,10 @@ def evaluate_condition(expr: str, context: Dict[str, Any]) -> bool:
     except SyntaxError as e:
         raise UnsafeExpressionError(f"Invalid condition syntax: {e}") from e
 
+    # Permit simple event fields (e.g. ``severity == 'critical'``) while
+    # keeping attribute access, calls and builtins unavailable.
     scope = {"context": context, "data": context}
+    scope.update({key: value for key, value in context.items() if isinstance(key, str) and key.isidentifier() and key not in scope})
     return bool(_eval_node(tree.body, scope))
 
 

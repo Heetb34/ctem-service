@@ -1,6 +1,7 @@
 import pytest
 import uuid
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
+import asyncio
 from src.services.engine import WorkflowEngine
 from src.models import Workflow, WorkflowExecution
 
@@ -20,3 +21,75 @@ async def test_execute_idempotency():
     # Should return existing without creating new
     assert result is not None
     # db.add should not be called again
+
+
+@pytest.mark.asyncio
+async def test_event_idempotency_survives_redis_cache_miss():
+    db = AsyncMock()
+    redis = AsyncMock()
+    kafka = AsyncMock()
+    workflow_id = uuid.uuid4()
+    tenant_id = uuid.uuid4()
+    existing_execution = WorkflowExecution(
+        execution_id=uuid.uuid4(),
+        workflow_id=workflow_id,
+        tenant_id=tenant_id,
+        trigger_type="event",
+        trigger_data={"event_id": "stable-event-id"},
+        status="completed",
+        dedup_key="durable-key",
+    )
+    db.get.return_value = Workflow(
+        workflow_id=workflow_id,
+        status="active",
+        definition={"steps": []},
+    )
+    redis.get.return_value = None
+    db.scalar.return_value = existing_execution
+
+    result = await WorkflowEngine(db, redis, kafka).execute(
+        workflow_id,
+        {"type": "event", "event_id": "stable-event-id"},
+        tenant_id,
+    )
+
+    assert result is existing_execution
+    db.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_step_retry_succeeds_after_transient_error(monkeypatch):
+    engine = WorkflowEngine(AsyncMock(), AsyncMock(), AsyncMock())
+    engine.executor.execute = AsyncMock(
+        side_effect=[RuntimeError("temporary"), {"status": "success"}]
+    )
+    engine.retry_mgr.calculate_backoff = Mock(return_value=0)
+    monkeypatch.setattr(asyncio, "sleep", AsyncMock())
+
+    result = await engine._execute_step_with_retry_rollback(
+        {"id": "retry-step", "retry": {"count": 2}},
+        Mock(context={}, execution_id=uuid.uuid4()),
+        {},
+    )
+
+    assert result == {"status": "success"}
+    assert engine.executor.execute.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_failed_step_runs_rollback_after_retries(monkeypatch):
+    engine = WorkflowEngine(AsyncMock(), AsyncMock(), AsyncMock())
+    engine.executor.execute = AsyncMock(side_effect=RuntimeError("permanent"))
+    engine.retry_mgr.calculate_backoff = Mock(return_value=0)
+    engine.rollback_mgr.rollback_step = AsyncMock()
+    monkeypatch.setattr(asyncio, "sleep", AsyncMock())
+    execution = Mock(context={}, execution_id=uuid.uuid4())
+    step = {"id": "failed-step", "retry": {"count": 2}, "rollback": [{"action": "undo"}]}
+
+    with pytest.raises(RuntimeError, match="permanent"):
+        await engine._execute_step_with_retry_rollback(step, execution, {"prior": "done"})
+
+    assert engine.executor.execute.await_count == 2
+    engine.rollback_mgr.rollback_step.assert_awaited_once_with(
+        step, execution, {"prior": "done"}
+    )

@@ -1,7 +1,6 @@
 services:
   kafka:
     image: apache/kafka:4.0.0
-    container_name: kafka
 
     ports:
       - "9092:9092"
@@ -25,10 +24,15 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/9092'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 180s
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
-    container_name: kafka-ui
 
     depends_on:
       - kafka
@@ -39,3 +43,176 @@ services:
     environment:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+
+  kafka-init:
+    image: apache/kafka:4.0.0
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command: >
+      "until /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --list >/dev/null 2>&1; do sleep 2; done;
+      for topic in exposure-events workflow-events notification.inapp notification.email notification.sms notification.push notification.slack notification.webhook notification.teams notification.retry notification.dlq; do
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic $$topic;
+      done"
+
+  ctem-mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: local-dev-password
+      MYSQL_DATABASE: ctem
+    ports:
+      - "3307:3306"
+    volumes:
+      - ctem_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-plocal-dev-password"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 180s
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+      POSTGRES_DB: workflow
+    ports:
+      - "5433:5432"
+    volumes:
+      - workflow_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d workflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7
+    ports:
+      - "6380:6379"
+
+  mailpit:
+    image: axllent/mailpit:latest
+    environment:
+      MP_DATABASE: /data/mailpit.db
+    ports:
+      - "1026:1025"
+      - "8026:8025"
+    volumes:
+      - mailpit_data:/data
+
+  ctem-api:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+    environment:
+      DATABASE_URL: mysql+pymysql://root:local-dev-password@ctem-mysql:3306/ctem
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      SMTP_FROM: reports@example.com
+      SMTP_USE_TLS: "false"
+    ports:
+      - "8000:8000"
+    depends_on:
+      ctem-mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      mailpit:
+        condition: service_started
+
+  workflow-api:
+    build: ./workflow-service-fixed
+    environment:
+      DATABASE_URL: postgresql+asyncpg://user:pass@postgres:5432/workflow
+      REDIS_URL: redis://redis:6379/0
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      NOTIFICATION_SERVICE_URL: http://notification-api:3000/notifications
+    ports:
+      - "8001:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      notification-api:
+        condition: service_started
+
+  notification-api:
+    image: ctem-notifications:local
+    build:
+      context: .
+      dockerfile: Dockerfile.notifications
+    environment:
+      KAFKA_BROKERS: kafka:29092
+      API_PORT: 3000
+      NOTIFICATION_DB_PATH: /data/notifications.db
+    ports:
+      - "3000:3000"
+    volumes:
+      - notification_data:/data
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+
+  notification-inapp-worker:
+    image: ctem-notifications:local
+    command: ["node", "src/workers/InApp.js"]
+    environment:
+      KAFKA_BROKERS: kafka:29092
+      NOTIFICATION_DB_PATH: /data/notifications.db
+    volumes:
+      - notification_data:/data
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      notification-api:
+        condition: service_started
+
+  notification-retry-worker:
+    image: ctem-notifications:local
+    command: ["node", "src/workers/Retry.js"]
+    environment:
+      KAFKA_BROKERS: kafka:29092
+      NOTIFICATION_DB_PATH: /data/notifications.db
+    volumes:
+      - notification_data:/data
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      notification-api:
+        condition: service_started
+
+  notification-dlq-worker:
+    image: ctem-notifications:local
+    command: ["node", "src/workers/DLQ.js"]
+    environment:
+      KAFKA_BROKERS: kafka:29092
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      notification-api:
+        condition: service_started
+
+volumes:
+  ctem_mysql_data:
+  workflow_postgres_data:
+  mailpit_data:
+  notification_data:

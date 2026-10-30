@@ -5,7 +5,9 @@ from src.utils.http_client import async_http_call
 from src.services.approval_service import ApprovalService
 from src.utils.safe_eval import evaluate_condition, UnsafeExpressionError
 
-NOTIFICATION_SERVICE_URL = "http://localhost:3000/notifications"
+import os
+
+NOTIFICATION_SERVICE_URL = os.getenv("NOTIFICATION_SERVICE_URL", "http://localhost:3000/notifications")
 
 
 class StepExecutor:
@@ -132,7 +134,9 @@ class StepExecutor:
             approvers=approvers,
             sla_hours=sla_hours
         )
-        return {"status": "pending_approval", "approval_id": approval.approval_id}
+        # Step results are persisted in a JSON column; serialize UUIDs here
+        # so approval-gated executions can be committed and resumed.
+        return {"status": "pending_approval", "approval_id": str(approval.approval_id)}
 
     async def _execute_sub_workflow(self, step: Dict, context: Dict) -> Dict:
         return {"status": "success", "sub_workflow_id": "sub_123"}

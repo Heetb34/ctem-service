@@ -6,7 +6,7 @@ import json
 from src.config import get_settings
 from src.database import engine, Base, AsyncSessionLocal
 from src.api.routes import workflows, executions, approvals
-# from src.events.consumer import consume_events  # uncomment if needed
+from src.events.consumer import consume_events
 import asyncio
 
 settings = get_settings()
@@ -22,10 +22,18 @@ async def lifespan(app: FastAPI):
         value_serializer=lambda v: json.dumps(v).encode()
     )
     await app.state.kafka_producer.start()
-    # Start background consumer (if needed)
-    # asyncio.create_task(consume_events(AsyncSessionLocal, app.state.redis, app.state.kafka_producer))
+    app.state.event_consumer_stop = asyncio.Event()
+    app.state.event_consumer_task = asyncio.create_task(
+        consume_events(AsyncSessionLocal, app.state.redis, app.state.kafka_producer, app.state.event_consumer_stop)
+    )
     yield
     # Shutdown
+    app.state.event_consumer_stop.set()
+    app.state.event_consumer_task.cancel()
+    try:
+        await app.state.event_consumer_task
+    except asyncio.CancelledError:
+        pass
     await app.state.redis.close()
     await app.state.kafka_producer.stop()
 

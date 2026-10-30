@@ -2,6 +2,8 @@ import asyncio
 import networkx as nx
 from datetime import datetime
 from uuid import UUID
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 from src.models import Workflow, WorkflowExecution, WorkflowStep
@@ -45,7 +47,21 @@ class WorkflowEngine:
         if existing:
             # Return existing execution (we'll fetch from DB)
             exec_id = UUID(existing["execution_id"])
-            return await self.db.get(WorkflowExecution, exec_id)
+            cached_execution = await self.db.get(WorkflowExecution, exec_id)
+            if cached_execution is not None:
+                return cached_execution
+
+        # Redis is a fast cache, but its TTL is finite and it can be flushed.
+        # The unique database key is the durable idempotency source of truth.
+        existing_execution = await self.db.scalar(
+            select(WorkflowExecution).where(WorkflowExecution.dedup_key == dedup_key)
+        )
+        if existing_execution is not None:
+            await self.idempotency.set_execution(
+                dedup_key,
+                {"execution_id": str(existing_execution.execution_id), "status": existing_execution.status},
+            )
+            return existing_execution
 
         # Create execution record
         execution = WorkflowExecution(
@@ -56,10 +72,25 @@ class WorkflowEngine:
             status="pending",
             initiated_by=initiated_by,
             dedup_key=dedup_key,
-            context={"step_results": {}},
+            context={**trigger_data, "trigger": trigger_data, "step_results": {}},
         )
         self.db.add(execution)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except IntegrityError:
+            # Two consumers may race after both miss Redis and the database.
+            # The unique constraint arbitrates; the loser reuses the winner.
+            await self.db.rollback()
+            existing_execution = await self.db.scalar(
+                select(WorkflowExecution).where(WorkflowExecution.dedup_key == dedup_key)
+            )
+            if existing_execution is None:
+                raise
+            await self.idempotency.set_execution(
+                dedup_key,
+                {"execution_id": str(existing_execution.execution_id), "status": existing_execution.status},
+            )
+            return existing_execution
         await self.db.refresh(execution)
 
         # Publish event

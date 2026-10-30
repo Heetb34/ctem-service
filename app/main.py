@@ -1,6 +1,8 @@
 from dotenv import load_dotenv
 load_dotenv()
 
+import asyncio
+
 from app.routers import prioritization
 from app.routers import exposure
 from app.database import Base, engine
@@ -23,9 +25,11 @@ from app.models.report_schedule import ReportSchedule
 from app.routers import report_schedule
 from apscheduler.schedulers.background import BackgroundScheduler
 from app.services.report_scheduler_runner import run_due_report_schedules
+from app.services.exposure_outbox_publisher import publish_exposure_outbox
 
 from app.models.report_job import ReportJob
 from app.models.saved_report import SavedReport
+from app.models.outbox_event import OutboxEvent
 from app.routers import saved_report
 
 Base.metadata.create_all(bind=engine)
@@ -35,6 +39,8 @@ app = FastAPI(
     version="1.0.0"
 )
 scheduler = BackgroundScheduler()
+outbox_stop = asyncio.Event()
+outbox_task = None
 
 
 @app.on_event("startup")
@@ -53,11 +59,29 @@ def start_report_scheduler():
         print("Report scheduler started. Checking every 30 seconds.")
 
 
+@app.on_event("startup")
+async def start_exposure_event_publisher():
+    global outbox_task
+    outbox_stop.clear()
+    outbox_task = asyncio.create_task(publish_exposure_outbox(outbox_stop))
+
+
 @app.on_event("shutdown")
 def stop_report_scheduler():
     if scheduler.running:
         scheduler.shutdown(wait=False)
         print("Report scheduler stopped.")
+
+
+@app.on_event("shutdown")
+async def stop_exposure_event_publisher():
+    outbox_stop.set()
+    if outbox_task is not None:
+        outbox_task.cancel()
+        try:
+            await outbox_task
+        except asyncio.CancelledError:
+            pass
         
 app.include_router(report_schedule.router)
 app.include_router(exposure.router)

@@ -1,0 +1,11 @@
+.git
+.env
+.venv
+.venv-win
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.pytest-work
+logs
+generated_reports
+*.db
