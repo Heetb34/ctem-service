@@ -32,8 +32,8 @@ class WorkflowEngine:
         self.idempotency = IdempotencyManager(redis_client)
         self.event_pub = EventPublisher(kafka_producer)
         self.retry_mgr = RetryManager()
-        self.rollback_mgr = RollbackManager(db)
         self.executor = StepExecutor(db, redis_client, kafka_producer)
+        self.rollback_mgr = RollbackManager(db, self.executor)
 
     async def execute(self, workflow_id: UUID, trigger_data: dict, tenant_id: UUID, initiated_by: UUID = None) -> WorkflowExecution:
         # Get workflow
@@ -70,6 +70,7 @@ class WorkflowEngine:
             trigger_type=trigger_data.get("type", "manual"),
             trigger_data=trigger_data,
             status="pending",
+            started_at=datetime.utcnow(),
             initiated_by=initiated_by,
             dedup_key=dedup_key,
             context={**trigger_data, "trigger": trigger_data, "step_results": {}},

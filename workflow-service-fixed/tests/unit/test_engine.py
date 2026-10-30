@@ -93,3 +93,28 @@ async def test_failed_step_runs_rollback_after_retries(monkeypatch):
     engine.rollback_mgr.rollback_step.assert_awaited_once_with(
         step, execution, {"prior": "done"}
     )
+
+
+@pytest.mark.asyncio
+async def test_rollback_runs_configured_compensations_in_reverse_order():
+    from src.services.rollback_manager import RollbackManager
+
+    db = AsyncMock()
+    query_result = Mock()
+    query_result.scalars.return_value.first.return_value = None
+    db.execute.return_value = query_result
+    executor = Mock()
+    executor.execute = AsyncMock(side_effect=[{"status": "success", "action": "undo-b"},
+                                             {"status": "success", "action": "undo-a"}])
+    manager = RollbackManager(db, executor)
+    execution = Mock(execution_id=uuid.uuid4(), context={"trigger": {"x": 1}})
+
+    results = await manager.rollback_step(
+        {"id": "work", "rollback": [
+            {"id": "undo-a", "type": "action", "action": "http"},
+            {"id": "undo-b", "type": "action", "action": "http"},
+        ]}, execution, {"prior": {"status": "success"}}
+    )
+
+    assert [item["action"] for item in results] == ["undo-b", "undo-a"]
+    assert [call.args[0]["id"] for call in executor.execute.await_args_list] == ["undo-b", "undo-a"]

@@ -104,3 +104,83 @@ docker compose up -d --force-recreate ctem-api
 - The proposal document was not present in this checkout, so proposal-specific
   scheduler architecture and performance targets remain unverified. The Evidence
   Repository source is also absent, so its integration remains blocked.
+
+## Pod Gamma acceptance checks (2026-10-30)
+
+The Pod Gamma test steps specify 100 concurrent workflows, 1,000 notifications
+per minute, notification delivery within five minutes, report generation under
+60 seconds, and at least 70% overall test coverage.
+
+- Workflow load: 100/100 completed with no request failures in 21.13 seconds.
+  Execution start latency was 4.12 seconds minimum, 16.50 seconds median, and
+  19.68 seconds p95; **the under-one-second start target failed**. Total endpoint
+  completion latency was 17.73 seconds median and 20.52 seconds p95.
+- Notification load: 1,000/1,000 accepted in 59.98 seconds (1,000.4/min by
+  client wall time; 1,013.8/min over server acceptance timestamps). There were
+  zero POST failures, all 1,000 were recorded as `SENT`, and zero were missing
+  at the five-minute deadline. Delivery latency was 464 ms p95 and 2.325 s max.
+- Report jobs: CSV completed in 6.71 s, PDF in 1.25 s, and XLSX in 1.30 s.
+  All three completed successfully, below the 60-second target.
+- Workflow tests after the rollback and start-time changes: 8 passed. The
+  in-app worker JavaScript syntax check and `git diff --check` passed.
+- Coverage remains at 64% combined for CTEM and Workflow (CTEM 76%, Workflow
+  43% from the prior measured run); **the 70% overall target is not met**.
+- The in-app consumer now relies on KafkaJS recovery for recoverable consumer
+  crashes and Docker restart policy for non-recoverable process exits. The
+  worker recovered from the earlier performance-run interruption and drained
+  the queue. Do not interpret this local single-broker test as a production
+  high-availability result.
+
+## Verified flow and remaining boundary
+
+```mermaid
+flowchart LR
+  E[CTEM exposure] --> T[MySQL transaction: exposure + outbox]
+  T --> K[Kafka: exposure-events]
+  K --> F[Workflow consumer: tenant + trigger filter]
+  F --> X[Persisted Workflow execution]
+  X --> N[Notification API]
+  N --> Q[Kafka: notification.inapp]
+  Q --> W[In-app worker]
+  W --> A[Notification audit DB + user feed]
+
+  S[Persisted report schedule] --> R[Schedule runner with lease + retry]
+  R --> G[Report generation]
+  G --> O[CSV / PDF / XLSX]
+  O --> M[SMTP delivery]
+  M --> I[Mailpit or previously verified Gmail inbox]
+
+  A -. evidence service source/runtime not present .-> V[Evidence repository]
+  V -. unavailable .-> G
+
+  classDef verified fill:#d9f2df,stroke:#287a3d,color:#102b18;
+  classDef partial fill:#fff0cc,stroke:#a56b00,color:#3b2700;
+  classDef blocked fill:#f8dada,stroke:#a33,color:#401;
+  class E,T,K,F,X,N,Q,W,A,S,R,G,O,M,I verified;
+  class V blocked;
+```
+
+The green path from CTEM exposure through Workflow to the Notification feed was
+verified end-to-end. The report schedule-to-email path was verified separately,
+including retry recovery, schedule persistence after an API restart, attachment
+formats, Mailpit delivery, and a previously user-confirmed Gmail inbox delivery.
+Evidence linkage into a final report was **not** verified because the Evidence
+Repository source and service are not available in this checkout.
+
+## Items still open
+
+- Workflow execution start time misses the one-second target under 100-way
+  concurrency and needs performance work.
+- Combined coverage is below the required 70%.
+- The test steps require a separate Go scheduler with cron/interval scheduling
+  and Redlock. This checkout has no Go scheduler source and the environment has
+  no Go toolchain; APScheduler remains the implemented CTEM report scheduler.
+  The separate-service contract and complete authoritative proposal were not
+  supplied, so this requirement is not implemented or represented as passing.
+- Evidence Repository source/runtime is absent. To finish that portion, provide
+  its repository or local source path and service access/Compose configuration.
+- Real SMS, push, Slack, Teams, and webhook providers were not tested because
+  this environment has no valid provider credentials or configured test
+  destinations. The in-app delivery path was tested.
+- No production load target, distributed multi-instance guarantee, or final
+  CTEM-to-evidence-to-report path is claimed from this local Docker test.

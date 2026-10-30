@@ -12,6 +12,15 @@ const kafkaClient = new Kafka({
 const consumer = kafkaClient.consumer({
   groupId: "inapp-worker-group",
 });
+consumer.on(consumer.events.CRASH, ({ payload }) => {
+  const error = payload.error;
+  console.error("❌ In-App Kafka consumer crashed:", error?.message || error);
+  // KafkaJS restarts consumers automatically for recoverable failures. If it
+  // marks the crash as non-recoverable, exit so Docker can restart the worker.
+  if (!payload.restart) {
+    process.exitCode = 1;
+  }
+});
 async function startConsumer() {
   await consumer.connect();
   console.log("✅ In-App Worker Connected");
@@ -25,13 +34,10 @@ async function startConsumer() {
       let notification;
       try {
         notification = JSON.parse(message.value.toString());
-        console.log("\n📨 In-App Notification Received");
-        console.log(notification);
         await sendInApp(notification);
         recordNotificationStatus(notification, "SENT", {
           recipient: "in-app",
         });
-        console.log("✅ In-App Processed Successfully\n");
       } catch (err) {
         console.error("❌ In-App Worker Error:", err.message);
         if (notification) {
@@ -39,16 +45,8 @@ async function startConsumer() {
             error: err.message,
           });
           if (notification.retry_count < 3) {
-            console.log(
-              `🔄 Sending notification to Retry Queue. Attempt: ${
-                notification.retry_count + 1
-              }`
-            );
             await publishRetry(notification);
           } else {
-            console.log(
-              "❌ Maximum retries reached. Notification should go to DLQ."
-            );
             recordNotificationStatus(notification, "DLQ", {
               reason: "Maximum retries reached",
             });
@@ -58,4 +56,7 @@ async function startConsumer() {
     },
   });
 }
-startConsumer().catch(console.error);
+startConsumer().catch((err) => {
+  console.error("❌ In-App Worker could not start:", err);
+  process.exitCode = 1;
+});
