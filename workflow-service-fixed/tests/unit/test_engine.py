@@ -86,12 +86,16 @@ async def test_failed_step_runs_rollback_after_retries(monkeypatch):
     execution = Mock(context={}, execution_id=uuid.uuid4())
     step = {"id": "failed-step", "retry": {"count": 2}, "rollback": [{"action": "undo"}]}
 
+    completed_results = {"prior": {"status": "success"}}
+    definitions = {"prior": {"rollback": [{"id": "undo-prior"}]}}
     with pytest.raises(RuntimeError, match="permanent"):
-        await engine._execute_step_with_retry_rollback(step, execution, {"prior": "done"})
+        await engine._execute_step_with_retry_rollback(
+            step, execution, completed_results, definitions
+        )
 
     assert engine.executor.execute.await_count == 2
     engine.rollback_mgr.rollback_step.assert_awaited_once_with(
-        step, execution, {"prior": "done"}
+        step, execution, completed_results, definitions
     )
 
 
@@ -104,8 +108,11 @@ async def test_rollback_runs_configured_compensations_in_reverse_order():
     query_result.scalars.return_value.first.return_value = None
     db.execute.return_value = query_result
     executor = Mock()
-    executor.execute = AsyncMock(side_effect=[{"status": "success", "action": "undo-b"},
-                                             {"status": "success", "action": "undo-a"}])
+    executor.execute = AsyncMock(side_effect=[
+        {"status": "success", "action": "undo-b"},
+        {"status": "success", "action": "undo-a"},
+        {"status": "success", "action": "undo-prior"},
+    ])
     manager = RollbackManager(db, executor)
     execution = Mock(execution_id=uuid.uuid4(), context={"trigger": {"x": 1}})
 
@@ -113,8 +120,13 @@ async def test_rollback_runs_configured_compensations_in_reverse_order():
         {"id": "work", "rollback": [
             {"id": "undo-a", "type": "action", "action": "http"},
             {"id": "undo-b", "type": "action", "action": "http"},
-        ]}, execution, {"prior": {"status": "success"}}
+        ]}, execution, {"prior": {"status": "success"}},
+        {"prior": {"name": "previous", "rollback": [
+            {"id": "undo-prior", "type": "action", "action": "http"}
+        ]}}
     )
 
-    assert [item["action"] for item in results] == ["undo-b", "undo-a"]
-    assert [call.args[0]["id"] for call in executor.execute.await_args_list] == ["undo-b", "undo-a"]
+    assert [item["action"] for item in results] == ["undo-b", "undo-a", "undo-prior"]
+    assert [call.args[0]["id"] for call in executor.execute.await_args_list] == [
+        "undo-b", "undo-a", "undo-prior"
+    ]

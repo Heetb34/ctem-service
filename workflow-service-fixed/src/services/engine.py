@@ -174,7 +174,9 @@ class WorkflowEngine:
                 raise RuntimeError("Deadlock in DAG")
 
             tasks = [
-                self._execute_step_with_retry_rollback(steps_map[node], execution, results)
+                self._execute_step_with_retry_rollback(
+                    steps_map[node], execution, results, steps_map
+                )
                 for node in ready
             ]
             task_results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -208,7 +210,10 @@ class WorkflowEngine:
 
         return DONE
 
-    async def _execute_step_with_retry_rollback(self, step_def: dict, execution: WorkflowExecution, previous_results: dict):
+    async def _execute_step_with_retry_rollback(
+        self, step_def: dict, execution: WorkflowExecution, previous_results: dict,
+        step_definitions: dict | None = None,
+    ):
         max_retries = step_def.get("retry", {}).get("count", settings.default_retry_count)
         backoff = step_def.get("retry", {}).get("backoff", settings.default_backoff)
         attempt = 0
@@ -219,8 +224,14 @@ class WorkflowEngine:
             except Exception as e:
                 attempt += 1
                 if attempt >= max_retries:
-                    if step_def.get("rollback"):
-                        await self.rollback_mgr.rollback_step(step_def, execution, previous_results)
+                    has_completed_compensation = any(
+                        step_definitions.get(step_id, {}).get("rollback")
+                        for step_id in previous_results
+                    ) if step_definitions else False
+                    if step_def.get("rollback") or has_completed_compensation:
+                        await self.rollback_mgr.rollback_step(
+                            step_def, execution, previous_results, step_definitions
+                        )
                     raise
                 wait = self.retry_mgr.calculate_backoff(backoff, attempt)
                 await asyncio.sleep(wait)

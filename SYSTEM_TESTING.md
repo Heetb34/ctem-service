@@ -121,7 +121,11 @@ per minute, notification delivery within five minutes, report generation under
   at the five-minute deadline. Delivery latency was 464 ms p95 and 2.325 s max.
 - Report jobs: CSV completed in 6.71 s, PDF in 1.25 s, and XLSX in 1.30 s.
   All three completed successfully, below the 60-second target.
-- Workflow tests after the rollback and start-time changes: 8 passed. The
+- Workflow tests after the rollback and start-time changes: 8 passed, including
+  reverse-order compensation of a failed step and previously completed steps
+  when those steps define rollback actions. These are mocked action-executor
+  tests; each production workflow must still define the appropriate compensating
+  action for its external side effects. The
   in-app worker JavaScript syntax check and `git diff --check` passed.
 - Coverage remains at 64% combined for CTEM and Workflow (CTEM 76%, Workflow
   43% from the prior measured run); **the 70% overall target is not met**.
