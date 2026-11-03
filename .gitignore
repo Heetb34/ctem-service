@@ -1,29 +1,39 @@
-
-# Node.js dependencies
-node_modules/
-
 # Environment and secrets
 .env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Python environments
 .venv/
 .venv-win/
-workflow-service-fixed/.venv/
-workflow-service-fixed/.venv-win/
+**/.venv/
+**/.venv-win/
+
+# Node dependencies
+node_modules/
+**/node_modules/
 
 # Python cache
 __pycache__/
+**/__pycache__/
 *.py[cod]
+.pytest_cache/
 .pytest-work/
 
 # Local databases
-notifications.db
-notifications.db-wal
-notifications.db-shm
+*.db
+*.db-shm
+*.db-wal
 
-# Runtime logs and generated reports
+# Logs and generated reports
 logs/
 generated_reports/
+**/generated_reports/
 
-# Temporary report exports in the project root
+# Temporary report exports
 /report-1.csv
 /report-1.pdf
 /report-1.xlsx

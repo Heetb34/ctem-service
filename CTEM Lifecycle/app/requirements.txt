@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+pymysql
+cryptography
+apscheduler
+python-dotenv
+aiokafka==0.12.0
+pydantic
+openpyxl
+reportlab
+httpx
+pytest

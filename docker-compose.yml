@@ -1,4 +1,4 @@
-services:
+﻿services:
   kafka:
     image: apache/kafka:4.0.0
 
@@ -52,7 +52,7 @@ services:
     entrypoint: ["/bin/bash", "-c"]
     command: >
       "until /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --list >/dev/null 2>&1; do sleep 2; done;
-      for topic in exposure-events workflow-events notification.inapp notification.email notification.sms notification.push notification.slack notification.webhook notification.teams notification.retry notification.dlq; do
+      for topic in exposure-events workflow-events evidence.events notification.inapp notification.email notification.sms notification.push notification.slack notification.webhook notification.teams notification.retry notification.dlq; do
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic $$topic;
       done"
 
@@ -106,7 +106,7 @@ services:
   ctem-api:
     build:
       context: .
-      dockerfile: app/Dockerfile
+      dockerfile: "CTEM Lifecycle/Dockerfile"
     environment:
       DATABASE_URL: mysql+pymysql://root:local-dev-password@ctem-mysql:3306/ctem
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
@@ -126,8 +126,23 @@ services:
       mailpit:
         condition: service_started
 
+  reporting-api:
+    build:
+      context: .
+      dockerfile: "Reporting Engine/Dockerfile"
+    environment:
+      DATABASE_URL: mysql+pymysql://root:local-dev-password@ctem-mysql:3306/reporting
+      CTEM_SERVICE_URL: http://ctem-api:8000
+    ports:
+      - "8003:8003"
+    depends_on:
+      ctem-mysql:
+        condition: service_healthy
+      ctem-api:
+        condition: service_started
+    restart: unless-stopped
   workflow-api:
-    build: ./workflow-service-fixed
+    build: "./Workflow Engine"
     environment:
       DATABASE_URL: postgresql+asyncpg://user:pass@postgres:5432/workflow
       REDIS_URL: redis://redis:6379/0
@@ -150,7 +165,7 @@ services:
   notification-api:
     image: ctem-notifications:local
     build:
-      context: .
+      context: "./Notification"
       dockerfile: Dockerfile.notifications
     environment:
       KAFKA_BROKERS: kafka:29092
@@ -214,8 +229,78 @@ services:
       notification-api:
         condition: service_started
 
+  evidence-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: evidence
+      POSTGRES_PASSWORD: evidence
+      POSTGRES_DB: evidence
+    ports:
+      - "5434:5432"
+    volumes:
+      - evidence_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evidence -d evidence"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  localstack:
+    image: localstack/localstack:3.7
+    environment:
+      SERVICES: s3
+      DEBUG: "0"
+    ports:
+      - "4566:4566"
+    volumes:
+      - ./Evidence storing/docker/localstack-init:/etc/localstack/init/ready.d
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4566/_localstack/health | grep -q s3"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  evidence-api:
+    build:
+      context: "./Evidence storing"
+      dockerfile: docker/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://evidence:evidence@evidence-postgres:5432/evidence
+      S3_ENDPOINT_URL: http://localstack:4566
+      S3_BUCKET: evidence
+      S3_REGION: us-east-1
+      S3_ACCESS_KEY: test
+      S3_SECRET_KEY: test
+      S3_RETENTION_DAYS: "30"
+      KAFKA_BOOTSTRAP: kafka:29092
+      JWT_SECRET: ${EVIDENCE_JWT_SECRET:-dev-only-change-me}
+      JWT_ALG: HS256
+      PRESIGN_TTL_SECONDS: "60"
+      LOG_LEVEL: INFO
+    ports:
+      - "8002:8000"
+    depends_on:
+      evidence-postgres:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    command: ["sh", "-c", "alembic upgrade head && uvicorn evidence_repo.main:app --host 0.0.0.0 --port 8000"]
+    restart: unless-stopped
+
 volumes:
   ctem_mysql_data:
   workflow_postgres_data:
   mailpit_data:
   notification_data:
+  evidence_postgres_data:
+
+
+
+
+
+
+
