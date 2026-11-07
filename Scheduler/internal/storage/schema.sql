@@ -1,4 +1,4 @@
-﻿CREATE TABLE IF NOT EXISTS scheduled_jobs (
+CREATE TABLE IF NOT EXISTS scheduled_jobs (
     id UUID PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     description TEXT,
@@ -44,3 +44,10 @@ ON job_history (job_id, started_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_job_history_retention
 ON job_history (completed_at);
+
+ALTER TABLE scheduled_jobs
+ADD COLUMN IF NOT EXISTS claimed_until TIMESTAMPTZ;
+
+ALTER TABLE scheduled_jobs
+ADD COLUMN IF NOT EXISTS claimed_by VARCHAR(255);
+
